@@ -1,0 +1,378 @@
+import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
+
+interface Annotation {
+  id: string;
+  filePath: string;
+  range: vscode.Range;
+  text: string;
+  color: string;
+}
+
+interface SerializedAnnotation {
+	id: string;
+	filePath: string;
+	range: {
+	  start: { line: number; character: number };
+	  end: { line: number; character: number };
+	};
+	text: string;
+	color: string;
+  }  
+
+let annotations: Annotation[] = [];
+const decorationTypeMap: { [key: string]: vscode.TextEditorDecorationType } = {};
+
+export function activate(context: vscode.ExtensionContext) {
+  console.log('Extension activated.');
+  loadAnnotations();
+
+  // Register the add annotation command
+  let disposable = vscode.commands.registerCommand('extension.addAnnotation', async () => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      vscode.window.showInformationMessage('No active editor detected.');
+      return;
+    }
+
+    const selection = editor.selection;
+    if (selection.isEmpty) {
+      vscode.window.showInformationMessage('No code selected.');
+      return;
+    }
+
+    const annotationText = await promptForAnnotation();
+    if (!annotationText) {
+      vscode.window.showInformationMessage('Annotation cancelled or empty.');
+      return;
+    }
+
+    const annotationColor = await promptForColor(context);
+    if (!annotationColor) {
+      vscode.window.showInformationMessage('No color selected.');
+      return;
+    }
+
+    const annotationId = generateUniqueId();
+
+    const annotation: Annotation = {
+      id: annotationId,
+      filePath: editor.document.uri.fsPath,
+      range: new vscode.Range(selection.start, selection.end),
+      text: annotationText,
+      color: annotationColor
+    };
+
+    annotations.push(annotation);
+    saveAnnotations();
+    applyDecoration(annotation, editor);
+  });
+
+  context.subscriptions.push(disposable);
+
+  // Apply annotations to all open editors
+  vscode.window.visibleTextEditors.forEach(editor => {
+    applyAnnotationsToEditor(editor);
+  });
+
+  // Apply annotations when a text editor is opened
+  vscode.window.onDidChangeActiveTextEditor(editor => {
+    if (editor) {
+      applyAnnotationsToEditor(editor);
+    }
+  });
+
+  // Update annotations on text change
+  vscode.workspace.onDidChangeTextDocument(event => {
+    updateAnnotationsOnDocumentChange(event);
+  });
+
+  // Register hover provider
+  context.subscriptions.push(
+    vscode.languages.registerHoverProvider('*', {
+      provideHover(document, position, token) {
+        const annotation = findAnnotationAtPosition(document.uri.fsPath, position);
+        if (annotation) {
+          return new vscode.Hover(`**Requirement:** ${annotation.text}`);
+        }
+        return undefined;
+      }
+    })
+  );
+}
+
+function promptForAnnotation(): Thenable<string | undefined> {
+  return vscode.window.showInputBox({
+    prompt: 'Enter requirement specification for the selected code',
+    placeHolder: 'e.g., Implements feature X'
+  });
+}
+
+function getWebviewContent() {
+	return `
+	<!DOCTYPE html>
+	<html lang="en">
+	<head>
+	  <style>
+		body {
+		  font-family: sans-serif;
+		  margin: 0;
+		  padding: 10px;
+		}
+		.container {
+		  display: flex;
+		  flex-direction: column;
+		  align-items: center;
+		}
+		#colorPicker {
+		  width: 100%;
+		  height: 150px;
+		}
+		#colorValue {
+		  margin-top: 10px;
+		  font-size: 16px;
+		}
+		#buttons {
+		  margin-top: 20px;
+		}
+		button {
+		  margin: 0 5px;
+		  padding: 5px 10px;
+		  font-size: 14px;
+		}
+	  </style>
+	</head>
+	<body>
+	  <div class="container">
+		<input type="color" id="colorPicker">
+		<div id="colorValue">#000000</div>
+		<div id="buttons">
+		  <button id="selectButton">Select</button>
+		  <button id="cancelButton">Cancel</button>
+		</div>
+	  </div>
+  
+	  <script>
+		const vscode = acquireVsCodeApi();
+		const colorPicker = document.getElementById('colorPicker');
+		const colorValue = document.getElementById('colorValue');
+		const selectButton = document.getElementById('selectButton');
+		const cancelButton = document.getElementById('cancelButton');
+  
+		colorPicker.addEventListener('input', () => {
+		  colorValue.textContent = colorPicker.value;
+		});
+  
+		selectButton.addEventListener('click', () => {
+		  vscode.postMessage({
+			command: 'colorSelected',
+			color: colorPicker.value
+		  });
+		});
+  
+		cancelButton.addEventListener('click', () => {
+		  vscode.postMessage({
+			command: 'cancel'
+		  });
+		});
+	  </script>
+	</body>
+	</html>
+	`;
+  }
+  
+
+  async function promptForColor(context: vscode.ExtensionContext): Promise<string | undefined> {
+	return new Promise((resolve) => {
+	  // Create and show a new webview
+	  const panel = vscode.window.createWebviewPanel(
+		'colorPicker',
+		'Select Highlight Color',
+		vscode.ViewColumn.Active,
+		{
+		  enableScripts: true
+		}
+	  );
+  
+	  // Set the webview's HTML content
+	  panel.webview.html = getWebviewContent();
+  
+	  // Receive messages from the webview
+	  panel.webview.onDidReceiveMessage(
+		message => {
+		  switch (message.command) {
+			case 'colorSelected':
+			  resolve(message.color);
+			  panel.dispose();
+			  break;
+			case 'cancel':
+			  resolve(undefined);
+			  panel.dispose();
+			  break;
+		  }
+		},
+		undefined,
+		context.subscriptions
+	  );
+  
+	  // Handle the panel being disposed (e.g., when the user closes the webview)
+	  panel.onDidDispose(
+		() => {
+		  resolve(undefined);
+		},
+		null,
+		context.subscriptions
+	  );
+	});
+  }
+  
+
+function generateUniqueId(): string {
+  return Math.random().toString(36).substr(2, 9);
+}
+
+function saveAnnotations() {
+	const workspaceFolders = vscode.workspace.workspaceFolders;
+	if (!workspaceFolders) {
+	  console.log('No workspace folder found.');
+	  return;
+	}
+  
+	const annotationsFile = path.join(workspaceFolders[0].uri.fsPath, '.vscode', 'annotations.json');
+	console.log('Saving annotations to:', annotationsFile);
+  
+	// Ensure the .vscode directory exists
+	const vscodeDirectory = path.dirname(annotationsFile);
+	if (!fs.existsSync(vscodeDirectory)) {
+	  fs.mkdirSync(vscodeDirectory);
+	  console.log('Created .vscode directory:', vscodeDirectory);
+	}
+  
+	// Convert 'vscode.Range' and 'vscode.Position' to plain objects
+	const annotationsToSave = annotations.map((annotation: Annotation) => ({
+		id: annotation.id,
+		filePath: annotation.filePath,
+		range: {
+		  start: {
+			line: annotation.range.start.line,
+			character: annotation.range.start.character,
+		  },
+		  end: {
+			line: annotation.range.end.line,
+			character: annotation.range.end.character,
+		  },
+		},
+		text: annotation.text,
+		color: annotation.color,
+	  }));
+  
+	fs.writeFileSync(annotationsFile, JSON.stringify(annotationsToSave, null, 2));
+	console.log('Annotations saved.');
+  }
+  
+  function loadAnnotations() {
+	const workspaceFolders = vscode.workspace.workspaceFolders;
+	if (!workspaceFolders) {
+	  console.log('No workspace folder found.');
+	  return;
+	}
+  
+	const annotationsFile = path.join(workspaceFolders[0].uri.fsPath, '.vscode', 'annotations.json');
+	console.log('Annotations file path:', annotationsFile);
+  
+	if (fs.existsSync(annotationsFile)) {
+	  try {
+		const content = fs.readFileSync(annotationsFile, 'utf8');
+		const loadedAnnotations = JSON.parse(content) as SerializedAnnotation[];
+		console.log(`Loaded ${loadedAnnotations.length} annotations from file.`);
+  
+		annotations = loadedAnnotations.map((annotationData: SerializedAnnotation) => {
+		  // Reconstruct the vscode.Range and vscode.Position objects
+		  const range = new vscode.Range(
+			new vscode.Position(annotationData.range.start.line, annotationData.range.start.character),
+			new vscode.Position(annotationData.range.end.line, annotationData.range.end.character)
+		  );
+  
+		  const annotation: Annotation = {
+			id: annotationData.id,
+			filePath: annotationData.filePath,
+			range: range,
+			text: annotationData.text,
+			color: annotationData.color,
+		  };
+  
+		  return annotation;
+		});
+  
+	  } catch (error) {
+		console.error('Error parsing annotations file:', error);
+	  }
+	} else {
+	  console.log('No annotations file found.');
+	}
+  }
+
+function applyDecoration(annotation: Annotation, editor: vscode.TextEditor) {
+  console.log(`Applying decoration for annotation ID: ${annotation.id}`);
+  const decorationType = getDecorationType(annotation.color);
+  editor.setDecorations(decorationType, [annotation.range]);
+}
+
+function getDecorationType(color: string): vscode.TextEditorDecorationType {
+	if (!decorationTypeMap[color]) {
+	  console.log(`Creating new decoration type for color: ${color}`);
+	  decorationTypeMap[color] = vscode.window.createTextEditorDecorationType({
+		backgroundColor: color,
+		isWholeLine: false
+	  });
+	} else {
+	  console.log(`Using existing decoration type for color: ${color}`);
+	}
+	return decorationTypeMap[color];
+  }
+  
+  
+
+function applyAnnotationsToEditor(editor: vscode.TextEditor) {
+  console.log(`Applying annotations to editor: ${editor.document.uri.fsPath}`);
+  const editorAnnotations = annotations.filter(a => a.filePath === editor.document.uri.fsPath);
+  console.log(`Found ${editorAnnotations.length} annotations for this editor.`);
+  const colorToRanges: { [key: string]: vscode.Range[] } = {};
+
+  editorAnnotations.forEach(annotation => {
+    if (!colorToRanges[annotation.color]) {
+      colorToRanges[annotation.color] = [];
+    }
+    colorToRanges[annotation.color].push(annotation.range);
+  });
+
+  Object.keys(colorToRanges).forEach(color => {
+    const decorationType = getDecorationType(color);
+    editor.setDecorations(decorationType, colorToRanges[color]);
+  });
+}
+
+function updateAnnotationsOnDocumentChange(event: vscode.TextDocumentChangeEvent) {
+  const document = event.document;
+  const editor = vscode.window.visibleTextEditors.find(e => e.document === document);
+  if (!editor) {
+    return;
+  }
+
+  console.log(`Document changed: ${document.uri.fsPath}`);
+  applyAnnotationsToEditor(editor);
+}
+
+function findAnnotationAtPosition(filePath: string, position: vscode.Position): Annotation | undefined {
+  return annotations.find(annotation => {
+    if (annotation.filePath === filePath) {
+      return annotation.range.contains(position);
+    }
+    return false;
+  });
+}
+
+export function deactivate() {
+  console.log('Extension deactivated.');
+}
