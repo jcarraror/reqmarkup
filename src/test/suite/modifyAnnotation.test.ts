@@ -1,9 +1,9 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import * as sinon from 'sinon';
-import { annotations } from '../../utils/annotations';  // Assuming annotations array exists
-import * as prompts from '../../utils/prompts';  // Assuming you have prompts utility
-import * as colorPicker from '../../webviews/colorPicker';  // Assuming color picker is a webview
+import { annotations } from '../../utils/annotations';
+import * as prompts from '../../utils/prompts';
+import * as colorPicker from '../../webviews/colorPicker';
 
 describe('Modify Annotation Command Tests', () => {
     let sandbox: sinon.SinonSandbox;
@@ -179,5 +179,60 @@ describe('Modify Annotation Command Tests', () => {
         assert.strictEqual(unchangedAnnotation.color, '#FF0000');
         assert.strictEqual(unchangedAnnotation.url, 'https://old-url.com');
     });
+
+    it('should handle the case where no active editor exists', async () => {
+        // Stub the activeTextEditor to return undefined
+        const editorStub = sandbox.stub(vscode.window, 'activeTextEditor').get(() => undefined);
+      
+        // Execute the command
+        await vscode.commands.executeCommand('extension.modifyAnnotation');
+      
+        // Verify that no annotation was added
+        assert.strictEqual(annotations.length, 0);
+      });
+
+      it('should not modify an annotation when an invalid URL is provided', async () => {
+        // Add an annotation to modify
+        annotations.push({
+          id: 'test-id',
+          filePath: 'test-file.ts',
+          range: new vscode.Range(new vscode.Position(0, 0), new vscode.Position(0, 10)),
+          text: 'Old Annotation',
+          color: '#FF0000',
+          url: 'https://old-url.com',
+        });
+      
+        // Stub user inputs for modification
+        sandbox.stub(prompts, 'promptForAnnotation').resolves('Modified Annotation');
+        
+        // Simulate invalid URL by returning undefined (as the input box would block invalid input)
+        sandbox.stub(prompts, 'promptForUrl').resolves(undefined);  // Simulate invalid URL rejection
+        
+        // Stub the color picker to return a valid color without opening the webview
+        sandbox.stub(colorPicker, 'promptForColor').resolves('#00FF00');  // Valid color
+      
+        // Stub the activeTextEditor and simulate selection inside the annotation
+        const editorStub = sandbox.stub(vscode.window, 'activeTextEditor').get(() => ({
+          document: {
+            uri: { fsPath: 'test-file.ts' },
+          },
+          selection: {
+            active: new vscode.Position(0, 5),  // Position inside the annotation
+          },
+          setDecorations: sinon.fake(),  // Mock setDecorations
+        } as unknown as vscode.TextEditor));
+      
+        // Execute the modifyAnnotation command
+        await vscode.commands.executeCommand('extension.modifyAnnotation');
+      
+        // Verify that the annotation was not modified because of the invalid URL
+        assert.strictEqual(annotations.length, 1);  // Annotation still exists
+        const unchangedAnnotation = annotations[0];
+        assert.strictEqual(unchangedAnnotation.text, 'Old Annotation');  // Text is unchanged
+        assert.strictEqual(unchangedAnnotation.url, 'https://old-url.com');  // URL is unchanged
+        assert.strictEqual(unchangedAnnotation.color, '#FF0000');  // Color is unchanged
+      });
+      
+      
 
 });

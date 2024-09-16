@@ -1,7 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import * as sinon from 'sinon';
-import { annotations } from '../../utils/annotations';  // Assuming annotations array exists
+import { annotations } from '../../utils/annotations';
 
 describe('Delete Annotation Command Tests', () => {
   let sandbox: sinon.SinonSandbox;
@@ -115,4 +115,16 @@ describe('Delete Annotation Command Tests', () => {
     // Verify that no annotation was deleted
     assert.strictEqual(annotations.length, 1); // Annotation should still exist
   });
+
+  it('should handle the case where no active editor exists', async () => {
+    // Stub the activeTextEditor to return undefined
+    const editorStub = sandbox.stub(vscode.window, 'activeTextEditor').get(() => undefined);
+  
+    // Execute the command
+    await vscode.commands.executeCommand('extension.deleteAnnotation');
+  
+    // Verify that no annotation was added
+    assert.strictEqual(annotations.length, 0);
+  });
+  
 });
