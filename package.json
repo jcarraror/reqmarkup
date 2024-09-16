@@ -23,6 +23,10 @@
     {
       "command": "extension.deleteAnnotation",
       "title": "Delete Requirement Annotation"
+    },
+    {
+      "command": "extension.modifyAnnotation",
+      "title": "Modify Requirement Annotation"
     }
   ],
   "menus": {
@@ -30,6 +34,11 @@
       {
         "command": "extension.addAnnotation",
         "when": "editorHasSelection",
+        "group": "navigation"
+      },
+      {
+        "command": "extension.modifyAnnotation",
+        "when": "editorTextFocus",
         "group": "navigation"
       },
       {

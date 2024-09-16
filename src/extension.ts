@@ -129,6 +129,73 @@ export function activate(context: vscode.ExtensionContext) {
 
 	context.subscriptions.push(deleteDisposable);
 
+	// Register the modify annotation command
+	let modifyDisposable = vscode.commands.registerCommand('extension.modifyAnnotation', async () => {
+		const editor = vscode.window.activeTextEditor;
+		if (!editor) {
+			vscode.window.showInformationMessage('No active editor detected.');
+			return;
+		}
+
+		const position = editor.selection.active;
+		const annotationsAtPosition = findAnnotationsAtPosition(editor.document.uri.fsPath, position);
+
+		if (annotationsAtPosition.length === 0) {
+			vscode.window.showInformationMessage('No annotations found at the cursor position.');
+			return;
+		}
+
+		// If there's more than one annotation, let the user choose
+		let annotationToModify: Annotation;
+		if (annotationsAtPosition.length === 1) {
+			annotationToModify = annotationsAtPosition[0];
+		} else {
+			// Show QuickPick to select which annotation to modify
+			const selected = await vscode.window.showQuickPick(
+				annotationsAtPosition.map(a => ({
+					label: a.text,
+					description: `Color: ${a.color}`,
+					annotation: a
+				})),
+				{
+					placeHolder: 'Select the annotation to modify'
+				}
+			);
+			if (!selected) {
+				// User canceled the selection
+				return;
+			}
+			annotationToModify = selected.annotation;
+		}
+
+		// Prompt for new annotation text
+		const newText = await promptForAnnotation(annotationToModify.text);
+		if (newText === undefined) {
+			vscode.window.showInformationMessage('Modification cancelled or invalid.');
+			return;
+		}
+
+		// Prompt for new color
+		const newColor = await promptForColor(context, annotationToModify.color);
+		if (!newColor) {
+			vscode.window.showInformationMessage('No color selected.');
+			return;
+		}
+
+		// Update the annotation
+		annotationToModify.text = newText;
+		annotationToModify.color = newColor;
+
+		// Save changes and update decorations
+		saveAnnotations();
+		applyAnnotationsToEditor(editor);
+
+		vscode.window.showInformationMessage('Annotation modified.');
+	});
+
+	context.subscriptions.push(modifyDisposable);
+
+
 	// Apply annotations to all open editors
 	vscode.window.visibleTextEditors.forEach(editor => {
 		applyAnnotationsToEditor(editor);
@@ -163,15 +230,17 @@ export function activate(context: vscode.ExtensionContext) {
 
 }
 
-function promptForAnnotation(): Thenable<string | undefined> {
+function promptForAnnotation(defaultText?: string): Thenable<string | undefined> {
 	return vscode.window.showInputBox({
-		prompt: 'Enter requirement specification for the selected code',
-		placeHolder: 'e.g., Implements feature X'
+	  prompt: 'Enter requirement specification for the selected code',
+	  value: defaultText || '',
+	  placeHolder: 'e.g., Implements feature X'
 	});
-}
+  }
+  
 
 // Maybe use a library for a color picker in the future
-function getWebviewContent() {
+function getWebviewContent(defaultColor: string): string {
 	return `
 	<!DOCTYPE html>
 	<html lang="en">
@@ -206,89 +275,91 @@ function getWebviewContent() {
 	  </style>
 	</head>
 	<body>
-	  <div class="container">
-		<input type="color" id="colorPicker">
-		<div id="colorValue">#000000</div>
-		<div id="buttons">
-		  <button id="selectButton">Select</button>
-		  <button id="cancelButton">Cancel</button>
-		</div>
-	  </div>
-  
-	  <script>
-		const vscode = acquireVsCodeApi();
-		const colorPicker = document.getElementById('colorPicker');
-		const colorValue = document.getElementById('colorValue');
-		const selectButton = document.getElementById('selectButton');
-		const cancelButton = document.getElementById('cancelButton');
-  
-		colorPicker.addEventListener('input', () => {
-		  colorValue.textContent = colorPicker.value;
-		});
-  
-		selectButton.addEventListener('click', () => {
-		  vscode.postMessage({
-			command: 'colorSelected',
-			color: colorPicker.value
-		  });
-		});
-  
-		cancelButton.addEventListener('click', () => {
-		  vscode.postMessage({
-			command: 'cancel'
-		  });
-		});
-	  </script>
-	</body>
-	</html>
+    <div class="container">
+      <input type="color" id="colorPicker" value="${defaultColor}">
+      <div id="colorValue">${defaultColor}</div>
+      <div id="buttons">
+        <button id="selectButton">Select</button>
+        <button id="cancelButton">Cancel</button>
+      </div>
+    </div>
+
+    <script>
+      const vscode = acquireVsCodeApi();
+      const colorPicker = document.getElementById('colorPicker');
+      const colorValue = document.getElementById('colorValue');
+      const selectButton = document.getElementById('selectButton');
+      const cancelButton = document.getElementById('cancelButton');
+
+      // Update colorValue display on load
+      colorValue.textContent = colorPicker.value;
+
+      colorPicker.addEventListener('input', () => {
+        colorValue.textContent = colorPicker.value;
+      });
+
+      selectButton.addEventListener('click', () => {
+        vscode.postMessage({
+          command: 'colorSelected',
+          color: colorPicker.value
+        });
+      });
+
+      cancelButton.addEventListener('click', () => {
+        vscode.postMessage({
+          command: 'cancel'
+        });
+      });
+    </script>
+  </body>
+  </html>
 	`;
 }
 
 
-async function promptForColor(context: vscode.ExtensionContext): Promise<string | undefined> {
+async function promptForColor(context: vscode.ExtensionContext, defaultColor?: string): Promise<string | undefined> {
 	return new Promise((resolve) => {
-		// Create and show a new webview
-		const panel = vscode.window.createWebviewPanel(
-			'colorPicker',
-			'Select Highlight Color',
-			vscode.ViewColumn.Active,
-			{
-				enableScripts: true
-			}
-		);
-
-		// Set the webview's HTML content
-		panel.webview.html = getWebviewContent();
-
-		// Receive messages from the webview
-		panel.webview.onDidReceiveMessage(
-			message => {
-				switch (message.command) {
-					case 'colorSelected':
-						resolve(message.color);
-						panel.dispose();
-						break;
-					case 'cancel':
-						resolve(undefined);
-						panel.dispose();
-						break;
-				}
-			},
-			undefined,
-			context.subscriptions
-		);
-
-		// Handle the panel being disposed (e.g., when the user closes the webview)
-		panel.onDidDispose(
-			() => {
-				resolve(undefined);
-			},
-			null,
-			context.subscriptions
-		);
+	  // Create and show a new webview
+	  const panel = vscode.window.createWebviewPanel(
+		'colorPicker',
+		'Select Highlight Color',
+		vscode.ViewColumn.Active,
+		{
+		  enableScripts: true
+		}
+	  );
+  
+	  // Set the webview's HTML content, passing the default color
+	  panel.webview.html = getWebviewContent(defaultColor || '#000000');
+  
+	  // Receive messages from the webview
+	  panel.webview.onDidReceiveMessage(
+		message => {
+		  switch (message.command) {
+			case 'colorSelected':
+			  resolve(message.color);
+			  panel.dispose();
+			  break;
+			case 'cancel':
+			  resolve(undefined);
+			  panel.dispose();
+			  break;
+		  }
+		},
+		undefined,
+		context.subscriptions
+	  );
+  
+	  // Handle the panel being disposed
+	  panel.onDidDispose(
+		() => {
+		  resolve(undefined);
+		},
+		null,
+		context.subscriptions
+	  );
 	});
-}
-
+  }
 
 function generateUniqueId(): string {
 	return Math.random().toString(36).substr(2, 9);
