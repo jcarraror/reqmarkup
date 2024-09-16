@@ -14,11 +14,15 @@
   "onStartupFinished"
 ],
   "main": "./out/extension.js",
-  "contributes": {
+"contributes": {
   "commands": [
     {
       "command": "extension.addAnnotation",
       "title": "Add Requirement Annotation"
+    },
+    {
+      "command": "extension.deleteAnnotation",
+      "title": "Delete Requirement Annotation"
     }
   ],
   "menus": {
@@ -26,6 +30,11 @@
       {
         "command": "extension.addAnnotation",
         "when": "editorHasSelection",
+        "group": "navigation"
+      },
+      {
+        "command": "extension.deleteAnnotation",
+        "when": "editorTextFocus",
         "group": "navigation"
       }
     ]
