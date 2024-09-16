@@ -8,7 +8,9 @@ interface Annotation {
 	range: vscode.Range;
 	text: string;
 	color: string;
+	url?: string;
 }
+
 
 interface SerializedAnnotation {
 	id: string;
@@ -19,6 +21,7 @@ interface SerializedAnnotation {
 	};
 	text: string;
 	color: string;
+	url?: string;
 }
 
 let annotations: Annotation[] = [];
@@ -48,6 +51,12 @@ export function activate(context: vscode.ExtensionContext) {
 			return;
 		}
 
+		const annotationUrl = await promptForUrl();
+		if (annotationUrl === undefined) {
+			vscode.window.showInformationMessage('Annotation cancelled or invalid URL.');
+			return;
+		}
+
 		const annotationColor = await promptForColor(context);
 		if (!annotationColor) {
 			vscode.window.showInformationMessage('No color selected.');
@@ -56,12 +65,14 @@ export function activate(context: vscode.ExtensionContext) {
 
 		const annotationId = generateUniqueId();
 
+
 		const annotation: Annotation = {
 			id: annotationId,
 			filePath: editor.document.uri.fsPath,
 			range: new vscode.Range(selection.start, selection.end),
 			text: annotationText,
-			color: annotationColor
+			color: annotationColor,
+			url: annotationUrl || undefined
 		};
 
 		annotations.push(annotation);
@@ -175,6 +186,13 @@ export function activate(context: vscode.ExtensionContext) {
 			return;
 		}
 
+		// Prompt for new URL
+		const newUrl = await promptForUrl(annotationToModify.url);
+		if (newUrl === undefined) {
+			vscode.window.showInformationMessage('Modification cancelled or invalid URL.');
+			return;
+		}
+
 		// Prompt for new color
 		const newColor = await promptForColor(context, annotationToModify.color);
 		if (!newColor) {
@@ -185,6 +203,7 @@ export function activate(context: vscode.ExtensionContext) {
 		// Update the annotation
 		annotationToModify.text = newText;
 		annotationToModify.color = newColor;
+		annotationToModify.url = newUrl || undefined;
 
 		// Save changes and update decorations
 		saveAnnotations();
@@ -220,7 +239,13 @@ export function activate(context: vscode.ExtensionContext) {
 				const annotations = findAnnotationsAtPosition(document.uri.fsPath, position);
 				if (annotations.length > 0) {
 					// Combine texts of all annotations
-					const hoverTexts = annotations.map(annotation => `**Requirement:** ${annotation.text}`);
+					const hoverTexts = annotations.map(annotation => {
+						let hoverText = `**Requirement:** ${annotation.text}`;
+						if (annotation.url) {
+							hoverText += `\n\n[View Requirement](${annotation.url})`;
+						}
+						return hoverText;
+					});
 					return new vscode.Hover(hoverTexts.join('\n\n'));
 				}
 				return undefined;
@@ -232,12 +257,32 @@ export function activate(context: vscode.ExtensionContext) {
 
 function promptForAnnotation(defaultText?: string): Thenable<string | undefined> {
 	return vscode.window.showInputBox({
-	  prompt: 'Enter requirement specification for the selected code',
-	  value: defaultText || '',
-	  placeHolder: 'e.g., Implements feature X'
+		prompt: 'Enter requirement specification for the selected code',
+		value: defaultText || '',
+		placeHolder: 'e.g., Implements feature X'
 	});
-  }
-  
+}
+
+async function promptForUrl(defaultUrl?: string): Promise<string | undefined> {
+	const url = await vscode.window.showInputBox({
+		prompt: 'Enter the URL for the requirement (leave empty if none)',
+		value: defaultUrl || '',
+		placeHolder: 'e.g., https://example.com/requirements/REQ-123',
+		validateInput: (input) => {
+			if (input === '') {
+				return null; // Empty input is acceptable for now
+			}
+			try {
+				new URL(input);
+				return null; // Valid URL (kinda strict though) #TODO: Improve validation
+			} catch {
+				return 'Invalid URL format.';
+			}
+		}
+	});
+	return url !== undefined ? url.trim() : undefined;
+}
+
 
 // Maybe use a library for a color picker in the future
 function getWebviewContent(defaultColor: string): string {
@@ -319,47 +364,47 @@ function getWebviewContent(defaultColor: string): string {
 
 async function promptForColor(context: vscode.ExtensionContext, defaultColor?: string): Promise<string | undefined> {
 	return new Promise((resolve) => {
-	  // Create and show a new webview
-	  const panel = vscode.window.createWebviewPanel(
-		'colorPicker',
-		'Select Highlight Color',
-		vscode.ViewColumn.Active,
-		{
-		  enableScripts: true
-		}
-	  );
-  
-	  // Set the webview's HTML content, passing the default color
-	  panel.webview.html = getWebviewContent(defaultColor || '#000000');
-  
-	  // Receive messages from the webview
-	  panel.webview.onDidReceiveMessage(
-		message => {
-		  switch (message.command) {
-			case 'colorSelected':
-			  resolve(message.color);
-			  panel.dispose();
-			  break;
-			case 'cancel':
-			  resolve(undefined);
-			  panel.dispose();
-			  break;
-		  }
-		},
-		undefined,
-		context.subscriptions
-	  );
-  
-	  // Handle the panel being disposed
-	  panel.onDidDispose(
-		() => {
-		  resolve(undefined);
-		},
-		null,
-		context.subscriptions
-	  );
+		// Create and show a new webview
+		const panel = vscode.window.createWebviewPanel(
+			'colorPicker',
+			'Select Highlight Color',
+			vscode.ViewColumn.Active,
+			{
+				enableScripts: true
+			}
+		);
+
+		// Set the webview's HTML content, passing the default color
+		panel.webview.html = getWebviewContent(defaultColor || '#000000');
+
+		// Receive messages from the webview
+		panel.webview.onDidReceiveMessage(
+			message => {
+				switch (message.command) {
+					case 'colorSelected':
+						resolve(message.color);
+						panel.dispose();
+						break;
+					case 'cancel':
+						resolve(undefined);
+						panel.dispose();
+						break;
+				}
+			},
+			undefined,
+			context.subscriptions
+		);
+
+		// Handle the panel being disposed
+		panel.onDidDispose(
+			() => {
+				resolve(undefined);
+			},
+			null,
+			context.subscriptions
+		);
 	});
-  }
+}
 
 function generateUniqueId(): string {
 	return Math.random().toString(36).substr(2, 9);
@@ -398,6 +443,7 @@ function saveAnnotations() {
 		},
 		text: annotation.text,
 		color: annotation.color,
+		url: annotation.url
 	}));
 
 	fs.writeFileSync(annotationsFile, JSON.stringify(annotationsToSave, null, 2));
@@ -433,6 +479,7 @@ function loadAnnotations() {
 					range: range,
 					text: annotationData.text,
 					color: annotationData.color,
+					url: annotationData.url
 				};
 
 				return annotation;
