@@ -10,62 +10,70 @@
     "Other"
   ],
   "activationEvents": [
-  "onCommand:extension.addAnnotation",
-  "onStartupFinished"
-],
-  "main": "./out/extension.js",
-"contributes": {
-  "commands": [
-    {
-      "command": "extension.addAnnotation",
-      "title": "Add Requirement Annotation"
-    },
-    {
-      "command": "extension.deleteAnnotation",
-      "title": "Delete Requirement Annotation"
-    },
-    {
-      "command": "extension.modifyAnnotation",
-      "title": "Modify Requirement Annotation"
-    }
+    "onCommand:extension.addAnnotation",
+    "onStartupFinished"
   ],
-  "menus": {
-    "editor/context": [
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
       {
         "command": "extension.addAnnotation",
-        "when": "editorHasSelection",
-        "group": "navigation"
-      },
-      {
-        "command": "extension.modifyAnnotation",
-        "when": "editorTextFocus",
-        "group": "navigation"
+        "title": "Add Requirement Annotation"
       },
       {
         "command": "extension.deleteAnnotation",
-        "when": "editorTextFocus",
-        "group": "navigation"
+        "title": "Delete Requirement Annotation"
+      },
+      {
+        "command": "extension.modifyAnnotation",
+        "title": "Modify Requirement Annotation"
       }
-    ]
-  }
-},
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "extension.addAnnotation",
+          "when": "editorHasSelection",
+          "group": "navigation"
+        },
+        {
+          "command": "extension.modifyAnnotation",
+          "when": "editorTextFocus",
+          "group": "navigation"
+        },
+        {
+          "command": "extension.deleteAnnotation",
+          "when": "editorTextFocus",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src",
-    "test": "vscode-test"
+    "pretest": "npm run compile",
+    "test": "npm run compile && node ./out/test/runTest.js"
   },
   "devDependencies": {
+    "@types/chai": "^4.3.19",
+    "@types/glob": "^8.1.0",
+    "@types/mocha": "^10.0.8",
+    "@types/node": "^20.16.5",
+    "@types/sinon": "^17.0.3",
     "@types/vscode": "^1.93.0",
-    "@types/mocha": "^10.0.7",
-    "@types/node": "20.x",
     "@typescript-eslint/eslint-plugin": "^8.3.0",
     "@typescript-eslint/parser": "^8.3.0",
-    "eslint": "^9.9.1",
-    "typescript": "^5.5.4",
     "@vscode/test-cli": "^0.0.10",
-    "@vscode/test-electron": "^2.4.1"
+    "@vscode/test-electron": "^2.4.1",
+    "chai": "^5.1.1",
+    "eslint": "^9.9.1",
+    "mocha": "^10.7.3",
+    "sinon": "^19.0.2",
+    "typescript": "^5.5.4"
+  },
+  "dependencies": {
+    "lru-cache": "^7.7.0"
   }
 }
